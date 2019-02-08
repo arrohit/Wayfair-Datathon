@@ -1,0 +1,214 @@
+# Classfication Prediction of the Products that needs to be Promoted
+### Response Variable : on_promotion (1- promote, 0 - Not promote)
+
+# Overview : 
+### Applied multiple machine learning models to predict the potential products to be promoted based on its physical properties
+
+# Outcome:
+### Successfully created a model to predict the potential products to be promoted with 92% Model Accuaracy
+
+### Installing Packages
+```{r,include=FALSE}
+require(naivebayes)
+library(caret)
+library(e1071)
+library(ROCR)
+library(class)
+library(Metrics)
+library(gains)
+library(ISLR)
+library(DiscriMiner)
+library(car)
+library(ggplot2)
+library(reshape)
+
+```
+
+
+### Reading Each Dataset
+```{r}
+orders<-read.csv("C:\\Users\\arroh\\Downloads\\orders.csv")
+prod<-read.csv("C:\\Users\\arroh\\Downloads\\products.csv") # Prod Data
+```
+
+### Inner Join Order and Products Dataset
+### Reason : To focus on products that have orders
+```{r}
+
+orderprod<-merge(prod,orders, by.x="product_id",by.y = "wayfair_product_id") # inner join of product data and orders based on product id
+
+```
+
+
+### Removing unwanted columns from the data
+```{r}
+op<-orderprod[,-c(1:6,14:20)] # Removed ids, names, categories and other string columns
+
+```
+
+
+## Converting predictor variable to factor (categorical variable)
+```{r}
+op$on_promotion<- as.factor(op$on_promotion) # as.factor converts variable to factor variable
+
+```
+
+
+### Removing NA values
+```{r}
+op<-op[complete.cases(op), ] # Gives only the values that are filled in each column
+
+```
+
+
+### Combining dimesnions to volume - based on domain knowledge
+```{r}
+op$volume<-(op$dimension_1 *op$dimension_2 * op$dimension_3)
+op<-op[,-c(2:4)] # removing dimension variables
+
+```
+
+
+### Normalizing the data to its z score
+```{r}
+op[,-4]<-scale(op[,-4]) # Scale func - subtracts each value by mean and divides it by its standard deviation
+
+```
+
+
+### Correlation heatmap 
+
+```{r}
+# Finding correlation between all the independant variables
+cormat <- round(cor(op[,-4]),2) # Correlation matrix 
+melted_cormat <- melt(cormat) # reshaped the date into 3 columns 
+
+# Heatmap
+ggplot(data = melted_cormat, aes(x=X1, y=X2, fill=value)) + 
+    geom_tile() +
+    geom_text(aes(x=X1,y=X2,label=value))+
+    labs(caption="Correlation Heatmap")
+# The Correlation values between the variables look to be too low hence dimension reduction is not required 
+```
+
+
+### Cross validation. divide the data into train and test datasets
+```{r}
+split = sample(1:nrow(op), size = round(0.3 * nrow(op))) # Splitting train 70% and Test 30% Data
+op_train = op[-split, ]
+op_test = op[split, ]
+
+```
+
+
+### Train the NB model with train data
+```{r}
+nb_classifier = naive_bayes(on_promotion ~ ., data = op_train) # Naive bayes model
+
+```
+
+
+### Predict the results of train data
+```{r}
+Predictedtrain = predict(nb_classifier, op_train) # Predicted the Train data
+confusionmatrix2 = table(Predictedtrain, op_train$on_promotion) # Confusion Matrix
+confusionMatrix(confusionmatrix2) # Confusion matrix along with report of accuracy, sensitivity etc
+
+```
+
+
+### predict the results of test data
+```{r}
+Predicted = predict(nb_classifier, op_test)
+confusionmatrix = table(Predicted, op_test$on_promotion)
+confusionMatrix(confusionmatrix)
+accur1<-accuracy(Predicted, op_test$on_promotion)
+# The Accuracy score tends to be too low
+```
+
+
+
+### Knn methodology
+
+### Taking k=3 for the start
+```{r}
+PredictedData = knn(op[,-4],op[,-4], cl=op[,4],k = 3, prob = FALSE, use.all = TRUE) # Prediction is using KNN
+confusionMatrix(PredictedData,op[,4])
+# Accuracy score looks good
+accur2<-accuracy(PredictedData,op[,4])
+```
+
+
+### Finding Optimal K
+```{r}
+# Tunning the model
+# looking for the errors and model accuracy for various values of K
+knn.cross <- tune.knn(x = op[,-4], y = op[,4], k = 1:20,tunecontrol=tune.control(sampling = "cross"), cross=10)
+summary(knn.cross) 
+# We can find best k based on the errors prodcued by each k (the least one with very low dispersion is better)
+# Plotting errors across each k value
+plot(knn.cross)
+
+```
+
+
+
+### LDA (Linear Discriminant Analysis)
+
+### Model Creation
+```{r}
+ldafunc1<- linDA(op_train[,-4], op_train[,4]) # LDA Model for train data
+
+```
+
+### Accuracy of the Data
+```{r}
+confusionMatrix(ldafunc1$classification,op_train[,4])
+# We can see the accuracy score is again too low 
+accur3<-accuracy(ldafunc1$classification,op_train[,4])
+
+```
+
+
+
+
+### Logistic Regression 
+
+```{r}
+# Training the model
+LogFit<-glm(on_promotion ~ ., data = op, family = binomial(link = "logit"))
+
+# Results of the Model
+summary(LogFit) 
+
+```
+
+```{r}
+# Predicting the Data
+LogFitPred<- predict(LogFit,op[,-4],type="response")
+LogFitPred<-round(LogFitPred,3) # Rounding to 3 decimal points
+
+# Confusion matrix between true and predicted class
+confusionmatrixlog <- table(ifelse(LogFitPred >= 0.5, 1, 0), op$on_promotion)
+
+confusionMatrix(confusionmatrixlog)
+# The accuracy has increased to 77% But still it is not the best
+
+accur4<-accuracy(ifelse(LogFitPred >= 0.5, 1, 0), op$on_promotion)
+
+```
+
+
+### Final Conlcusion
+```{r}
+data.frame("NaiveBayes"= accur1,"Knn"=accur2, 'LDA'=accur3, "Logistic"=accur4)
+# We can see that Knn outperforms other models with better accuracy
+# Hence Knn can be used to classify the potential products for promotion using Products/order information
+
+# So when a new product with its physical properties know , we can predict if they need to promoted or not based on the K nearest classifier model
+
+```
+
+
+
+
